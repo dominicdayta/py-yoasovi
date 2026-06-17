@@ -1,12 +1,14 @@
-import torch
+import time
 import pyro
 import pyro.optim as optim
 from pyro.infer import SVI, Trace_ELBO
 from pyro.infer.autoguide import AutoDiagonalNormal
 
-import time
-
-def run_advi(model, data, num_iterations=2000, lr=0.01):
+def run_advi(model, *args, num_iterations=2000, lr=0.01, **kwargs):
+    """
+    Standard ADVI using Pyro's AutoGuide and SVI.
+    *args and **kwargs are passed directly to the model and guide.
+    """
     pyro.clear_param_store()
     guide = AutoDiagonalNormal(model)
     adam = optim.Adam({"lr": lr})
@@ -16,10 +18,10 @@ def run_advi(model, data, num_iterations=2000, lr=0.01):
     start_time = time.perf_counter()
     
     for t in range(num_iterations):
-        loss = svi.step(data) 
+        loss = svi.step(*args, **kwargs) 
         
         elbo_history.append(-loss) 
         time_history.append(time.perf_counter() - start_time)
-        evals_history.append(t + 1) # 1 eval per iteration
+        evals_history.append(t + 1)
         
     return guide, elbo_history, time_history, evals_history

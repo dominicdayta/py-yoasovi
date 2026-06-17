@@ -1,4 +1,9 @@
-from pyro.distributions import Normal
+import time
+import torch
+import pyro
+import pyro.optim as optim
+from pyro.infer import SVI, Trace_ELBO
+from pyro.infer.autoguide import AutoDiagonalNormal
 from torch.quasirandom import SobolEngine
 
 class QMCAutoDiagonalNormal(AutoDiagonalNormal):
@@ -18,13 +23,17 @@ class QMCAutoDiagonalNormal(AutoDiagonalNormal):
             self.sobol = SobolEngine(dimension=latent_dim, scramble=True)
             
         u_sobol = self.sobol.draw(10).to(loc.device)
-        
         z_qmc = torch.distributions.Normal(0, 1).icdf(u_sobol)
         
         latent = loc + scale * z_qmc
         return latent
 
-def run_qmcvi(model, data, num_iterations=2000, lr=0.01):
+
+def run_qmcvi(model, *args, num_iterations=2000, lr=0.01, **kwargs):
+    """
+    Quasi-Monte Carlo VI.
+    *args and **kwargs are passed directly to the model and guide.
+    """
     pyro.clear_param_store()
     guide = QMCAutoDiagonalNormal(model)
     adam = optim.Adam({"lr": lr})
@@ -35,7 +44,7 @@ def run_qmcvi(model, data, num_iterations=2000, lr=0.01):
     grad_evals = 0
     
     for t in range(num_iterations):
-        loss = svi.step(data)
+        loss = svi.step(*args, **kwargs)
         grad_evals += 10
         
         elbo_history.append(-loss)

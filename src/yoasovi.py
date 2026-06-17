@@ -1,45 +1,55 @@
-import copy
+import time
+import torch
+import pyro
+from pyro.infer import Trace_ELBO
+from pyro.infer.autoguide import AutoDiagonalNormal
 
-def run_yoasovi(model, data, num_iterations=2000, lr=0.01, M_init=0.1, M_max=10.0):
+def run_yoasovi(model, *args, num_iterations=2000, lr=0.01, M_init=0.1, M_max=10.0, **kwargs):
+    """
+    YOASOVI implementation using Tempered Stochastic Line Search.
+    *args and **kwargs are passed directly to the model and guide.
+    """
     pyro.clear_param_store()
     guide = AutoDiagonalNormal(model)
     elbo_obj = Trace_ELBO(num_particles=1)
     
-    guide(data) 
-    params = pyro.get_param_store().get_all_param_names()
-    torch_opt = torch.optim.Adam(pyro.get_param_store().parameters(), lr=lr)
+    guide(*args, **kwargs) 
+    optim_params = [unconstrained for name, unconstrained in pyro.get_param_store().named_parameters()]
+    torch_opt = torch.optim.Adam(optim_params, lr=lr)
     
     M_schedule = torch.linspace(M_init, M_max, num_iterations)
     
     elbo_history, time_history, evals_history = [], [], []
     start_time = time.perf_counter()
-    
-    with torch.no_grad():
-        prev_elbo = -elbo_obj.loss(model, guide, data)
+    prev_elbo = -elbo_obj.loss(model, guide, *args, **kwargs)
     
     grad_evals = 0
     
     for t in range(num_iterations):
-        state_dict_backup = {k: v.clone() for k, v in pyro.get_param_store().named_parameters()}
+        state_dict_backup = {
+            name: unconstrained.data.clone() 
+            for name, unconstrained in pyro.get_param_store().named_parameters()
+        }
         
         torch_opt.zero_grad()
-        loss = elbo_obj.loss(model, guide, data)
+        
+        loss = elbo_obj.differentiable_loss(model, guide, *args, **kwargs)
         loss.backward()
         torch_opt.step()
-        grad_evals += 1
+        grad_evals += 1 
         
-        with torch.no_grad():
-            new_elbo = -elbo_obj.loss(model, guide, data)
+        new_elbo = -elbo_obj.loss(model, guide, *args, **kwargs)
         
         T_t = abs(prev_elbo) / M_schedule[t] 
         diff = new_elbo - prev_elbo
-        p_accept = min(1.0, torch.exp(torch.tensor(diff / T_t)).item())
+        p_accept = min(1.0, torch.exp(diff / T_t).item())
         
         if torch.rand(1).item() < p_accept:
             prev_elbo = new_elbo
         else:
-            for k, v in pyro.get_param_store().named_parameters():
-                v.data.copy_(state_dict_backup[k].data)
+            current_unconstrained_params = dict(pyro.get_param_store().named_parameters())
+            for name, saved_tensor in state_dict_backup.items():
+                current_unconstrained_params[name].data.copy_(saved_tensor)
                 
         elbo_history.append(prev_elbo)
         time_history.append(time.perf_counter() - start_time)
