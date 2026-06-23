@@ -14,6 +14,17 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.advi import run_advi
 from src.yoasovi import run_yoasovi
 from src.qmcvi import run_qmcvi
+from src.bbvi import run_bbvi
+from src.iaf import run_iaf
+
+methods = {
+    "ADVI": run_advi,
+    "IAF": run_iaf,
+    "QMCVI": run_qmcvi,
+    "YOASOVI": run_yoasovi,
+    "BBVI_500": lambda *a, **kw: run_bbvi(*a, num_particles=500, **kw),
+    "BBVI_1000": lambda *a, **kw: run_bbvi(*a, num_particles=1000, **kw)
+}
 
 class BayesianNeuralNetwork3Layer(PyroModule):
     def __init__(self, in_features, hidden_dim=50):
@@ -81,12 +92,6 @@ def main():
         in_features = 10
         X_train = torch.randn(args.n_samples, in_features)
         y_train = torch.sin(X_train[:, 0]) + 2 * X_train[:, 1]**2 - 1.5 * X_train[:, 2] + torch.randn(args.n_samples) * 0.5
-
-    methods = {
-        "ADVI": run_advi,
-        "QMCVI": run_qmcvi,
-        "YOASOVI": run_yoasovi
-    }
 
     for method_name, method_func in methods.items():
         print(f"--- Running {method_name} ---")
