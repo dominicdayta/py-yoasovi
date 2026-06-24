@@ -29,28 +29,33 @@ methods = {
     "BBVI_1000": lambda *a, **kw: run_bbvi(*a, num_particles=1000, **kw)
 }
 
-class BayesianNeuralNetwork3Layer(PyroModule):
-    def __init__(self, in_features, hidden_dim=50):
+class BayesianNeuralNetwork4Layer(PyroModule):
+    def __init__(self, in_features, hidden_dim_1=50, hidden_dim_2=30):
         super().__init__()
         
-        self.fc1 = PyroModule[nn.Linear](in_features, hidden_dim)
-        self.fc2 = PyroModule[nn.Linear](hidden_dim, hidden_dim)
-        self.fc3 = PyroModule[nn.Linear](hidden_dim, 1)
+        self.fc1 = PyroModule[nn.Linear](in_features, hidden_dim_1)
+        self.fc2 = PyroModule[nn.Linear](hidden_dim_1, hidden_dim_1)
+        self.fc3 = PyroModule[nn.Linear](hidden_dim_1, hidden_dim_2)
+        self.fc4 = PyroModule[nn.Linear](hidden_dim_2, 1)
 
-        self.fc1.weight = PyroSample(dist.Normal(0., 1.).expand([hidden_dim, in_features]).to_event(2))
-        self.fc1.bias = PyroSample(dist.Normal(0., 1.).expand([hidden_dim]).to_event(1))
+        self.fc1.weight = PyroSample(dist.Normal(0., 1.).expand([hidden_dim_1, in_features]).to_event(2))
+        self.fc1.bias = PyroSample(dist.Normal(0., 1.).expand([hidden_dim_1]).to_event(1))
         
-        self.fc2.weight = PyroSample(dist.Normal(0., 1.).expand([hidden_dim, hidden_dim]).to_event(2))
-        self.fc2.bias = PyroSample(dist.Normal(0., 1.).expand([hidden_dim]).to_event(1))
+        self.fc2.weight = PyroSample(dist.Normal(0., 1.).expand([hidden_dim_1, hidden_dim_1]).to_event(2))
+        self.fc2.bias = PyroSample(dist.Normal(0., 1.).expand([hidden_dim_1]).to_event(1))
         
-        self.fc3.weight = PyroSample(dist.Normal(0., 1.).expand([1, hidden_dim]).to_event(2))
-        self.fc3.bias = PyroSample(dist.Normal(0., 1.).expand([1]).to_event(1))
+        self.fc3.weight = PyroSample(dist.Normal(0., 1.).expand([hidden_dim_2, hidden_dim_1]).to_event(2))
+        self.fc3.bias = PyroSample(dist.Normal(0., 1.).expand([hidden_dim_2]).to_event(1))
+        
+        self.fc4.weight = PyroSample(dist.Normal(0., 1.).expand([1, hidden_dim_2]).to_event(2))
+        self.fc4.bias = PyroSample(dist.Normal(0., 1.).expand([1]).to_event(1))
 
     def forward(self, x, y=None):
         hidden1 = F.leaky_relu(self.fc1(x))
         hidden2 = F.leaky_relu(self.fc2(hidden1))
-        
-        mu = self.fc3(hidden2).squeeze(-1)
+        hidden3 = F.leaky_relu(self.fc3(hidden2))
+
+        mu = self.fc4(hidden3).squeeze(-1)
         sigma = pyro.sample("sigma", dist.Uniform(0., 10.))
         
         with pyro.plate("data", x.shape[0]):
@@ -59,7 +64,7 @@ class BayesianNeuralNetwork3Layer(PyroModule):
         return mu
 
 def main():
-    parser = argparse.ArgumentParser(description="Run VI Benchmarks on 3-Layer BNN")
+    parser = argparse.ArgumentParser(description="Run VI Benchmarks on 4-Layer BNN")
     parser.add_argument("--data", type=str, default=None, 
                         help="Path to CSV data file. Last column is assumed to be the target (y).")
     parser.add_argument("--has_header", action="store_true", 
@@ -80,7 +85,7 @@ def main():
     args = parser.parse_args()
 
     # Setup results directory
-    output_dir = os.path.join(os.path.dirname(__file__), '..', 'results', 'neural3')
+    output_dir = os.path.join(os.path.dirname(__file__), '..', 'results', 'neural4')
     os.makedirs(output_dir, exist_ok=True)
     
     if args.data is not None:
@@ -126,7 +131,7 @@ def main():
         print(f"--- Running {method_name} ---")
         pyro.set_rng_seed(42)
         
-        model = BayesianNeuralNetwork3Layer(in_features=in_features, hidden_dim=50)
+        model = BayesianNeuralNetwork4Layer(in_features=in_features, hidden_dim_1=50, hidden_dim_2=30)
         
         if method_name == "YOASOVI":
             guide, elbo_hist, time_hist, evals_hist = method_func(
