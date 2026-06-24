@@ -2,6 +2,7 @@ import os
 import sys
 import pickle
 import argparse
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -15,14 +16,14 @@ from src.advi import run_advi
 from src.yoasovi import run_yoasovi
 from src.qmcvi import run_qmcvi
 from src.bbvi import run_bbvi
-from src.iaf import run_iaf
+from src.lowrank import run_lowrank
 
 from sklearn.model_selection import train_test_split
 from src.evaluation import compute_rmse, compute_dic
 
 methods = {
     "ADVI": run_advi,
-    "IAF": run_iaf,
+    "LowRank": run_lowrank,
     "QMCVI": run_qmcvi,
     "YOASOVI": run_yoasovi,
     "BBVI_500": lambda *a, **kw: run_bbvi(*a, num_particles=500, **kw),
@@ -122,43 +123,69 @@ def main():
     
     in_features = X_train.shape[1]
 
+    seeds = [42, 101, 777, 2024, 8888]
+    n_trials = len(seeds)
     for method_name, method_func in methods.items():
-        print(f"--- Running {method_name} ---")
-        pyro.set_rng_seed(42)
+        print(f"\n{'='*40}")
+        print(f"Executing {method_name} across {n_trials} trials...")
+        print(f"{'='*40}")
         
-        model = BayesianNeuralNetwork3Layer(in_features=in_features, hidden_dim=50)
+        trial_metrics = {'elbo': [], 'time': [], 'rmse': [], 'dic': []}
         
-        if method_name == "YOASOVI":
-            guide, elbo_hist, time_hist, evals_hist = method_func(
-                model, X_train, y=y_train, 
-                num_iterations=args.num_iterations, 
-                lr=args.learning_rate, 
-                M_init=args.M_init, 
-                M_max=args.M_max
-            )
-        else:
-            guide, elbo_hist, time_hist, evals_hist = method_func(
-                model, X_train, y=y_train, 
-                num_iterations=args.num_iterations, 
-                lr=args.learning_rate
-            )
+        # Save the history of the FIRST seed (42) for our line plots
+        plot_histories = {} 
+
+        for i, seed in enumerate(seeds):
+            print(f"  -> Trial {i+1}/{n_trials} (Seed: {seed})")
+            torch.manual_seed(seed)
+            pyro.set_rng_seed(seed)
             
-        # Compute post-training metrics on test set and print to console
-        print(f"Computing evaluation metrics for {method_name} on test set...")
-        final_rmse, y_pred_test = compute_rmse(model, guide, X_test, y_test, num_samples=100)
-        final_dic = compute_dic(model, guide, X_test, y_test, num_samples=100)
-        final_elbo = elbo_hist[-1]
-        final_time = time_hist[-1]
-        print(f"Final ELBO: {final_elbo:.2f} | Time: {final_time:.2f}s | Test RMSE: {final_rmse:.4f} | Test DIC: {final_dic:.2f}")
+            model = BayesianNeuralNetwork3Layer(in_features=in_features, hidden_dim=50)
             
+            if method_name == "YOASOVI":
+                guide, elbo_hist, time_hist, evals_hist = method_func(
+                    model, X_train, y=y_train, 
+                    num_iterations=args.num_iterations, lr=args.learning_rate, 
+                    M_init=args.M_init, M_max=args.M_max
+                )
+            else:
+                guide, elbo_hist, time_hist, evals_hist = method_func(
+                    model, X_train, y=y_train, 
+                    num_iterations=args.num_iterations, lr=args.learning_rate
+                )
+                
+            final_rmse, y_pred_test = compute_rmse(model, guide, X_test, y_test, num_samples=100)
+            final_dic = compute_dic(model, guide, X_test, y_test, num_samples=100)
+            
+            trial_metrics['elbo'].append(elbo_hist[-1])
+            trial_metrics['time'].append(time_hist[-1])
+            trial_metrics['rmse'].append(final_rmse)
+            trial_metrics['dic'].append(final_dic)
+            
+            if seed == seeds[0]:
+                plot_histories = {
+                    "elbo": elbo_hist, "time": time_hist, "evals": evals_hist,
+                    "y_true": y_test_np, "y_pred": y_pred_test
+                }
+
+        # Aggregate and Print the Results for the Paper
+        mean_elbo, std_elbo = np.mean(trial_metrics['elbo']), np.std(trial_metrics['elbo'])
+        mean_time, std_time = np.mean(trial_metrics['time']), np.std(trial_metrics['time'])
+        mean_rmse, std_rmse = np.mean(trial_metrics['rmse']), np.std(trial_metrics['rmse'])
+        mean_dic, std_dic = np.mean(trial_metrics['dic']), np.std(trial_metrics['dic'])
+
+        print(f"\n[FINAL SUMMARY: {method_name}]")
+        print(f"  ELBO: {mean_elbo:.2f} ± {std_elbo:.2f}")
+        print(f"  Time: {mean_time:.2f}s ± {std_time:.2f}s")
+        print(f"  RMSE: {mean_rmse:.4f} ± {std_rmse:.4f}")
+        print(f"  DIC:  {mean_dic:.2f} ± {std_dic:.2f}\n")
+            
+        # Serialize the aggregated metrics AND the plot arrays
         results = {
-            "elbo": elbo_hist,
-            "time": time_hist,
-            "evals": evals_hist,
-            "rmse": final_rmse,
-            "dic": final_dic,
-            "y_true": y_test_np,
-            "y_pred": y_pred_test
+            "method": method_name,
+            "trials": n_trials,
+            "summary_metrics": trial_metrics, # Contains the raw arrays of all 5 trial outcomes
+            "plot_data": plot_histories       # Contains the step-by-step arrays for Trial 1
         }
         
         dataset_name = os.path.splitext(os.path.basename(args.data))[0] if args.data else "synthetic"
@@ -166,8 +193,6 @@ def main():
         
         with open(filename, 'wb') as f:
             pickle.dump(results, f)
-            
-        print(f"Saved {method_name} results to {filename}\n")
 
 if __name__ == "__main__":
     main()
