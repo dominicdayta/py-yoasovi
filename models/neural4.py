@@ -148,11 +148,13 @@ def main():
                 lr=args.learning_rate
             )
             
-        # Compute Post-Training Metrics on TEST SET
+        # Compute post-training metrics on test set and print to console
         print(f"Computing evaluation metrics for {method_name} on test set...")
         final_rmse, y_pred_test = compute_rmse(model, guide, X_test, y_test, num_samples=100)
         final_dic = compute_dic(model, guide, X_test, y_test, num_samples=100)
-        print(f"Test RMSE: {final_rmse:.4f} | Test DIC: {final_dic:.2f}")
+        final_elbo = elbo_hist[-1]
+        final_time = time_hist[-1]
+        print(f"Final ELBO: {final_elbo:.2f} | Time: {final_time:.2f}s | Test RMSE: {final_rmse:.4f} | Test DIC: {final_dic:.2f}")
             
         results = {
             "elbo": elbo_hist,
