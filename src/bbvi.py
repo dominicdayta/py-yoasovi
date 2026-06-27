@@ -17,10 +17,11 @@ class ForceScoreFunction(poutine.messenger.Messenger):
             
             dist.__class__ = NonReparamDist
 
-def run_bbvi(model, *args, num_iterations=2000, lr=0.01, num_particles=500, **kwargs):
+def run_bbvi(model, *args, num_iterations=2000, lr=0.01, num_particles=500, max_time_seconds=18000, **kwargs):
     """
     STRICT Black Box Variational Inference using REINFORCE (score-function) gradients.
     Explicitly disables reparameterization to force true BBVI variance.
+    Includes a time-clipping mechanism to right-censor runaway compute times.
     """
     pyro.clear_param_store()
     guide = AutoDiagonalNormal(model)
@@ -37,11 +38,17 @@ def run_bbvi(model, *args, num_iterations=2000, lr=0.01, num_particles=500, **kw
     grad_evals = 0
     
     for t in range(num_iterations):
+        elapsed_time = time.perf_counter() - start_time
+        if elapsed_time > max_time_seconds:
+            print(f"      [!] Compute budget exceeded ({max_time_seconds}s). Right-censoring BBVI at iteration {t}.")
+            break
+            
         loss = svi.step(*args, **kwargs) 
         grad_evals += num_particles 
         
         elbo_history.append(-loss) 
-        time_history.append(time.perf_counter() - start_time)
+        
+        time_history.append(time.perf_counter() - start_time) 
         evals_history.append(grad_evals) 
         
     return guide, elbo_history, time_history, evals_history
